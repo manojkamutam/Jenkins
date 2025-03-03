@@ -1,0 +1,69 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to build')
+    }
+    
+    environment {
+        AWS_CREDENTIALS_ID = 'your-aws-credentials-id' // Replace with AWS credentials ID
+        ECR_REPOSITORY = 'your-ecr-repo-url' // Replace with your ECR repository URL
+        ECS_CLUSTER = 'your-ecs-cluster-name' // Replace with your ECS cluster name
+        ECS_SERVICE = 'your-ecs-service-name' // Replace with your ECS service name
+        IMAGE_TAG = "$(date +%d%m%Y-%H-%M)"
+    }
+    
+    stages {
+        stage('Checkout Code') {
+            steps {
+                script {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${params.BRANCH_NAME}"]],
+                        userRemoteConfigs: [[
+                            credentialsId: 'your-git-credentials-id', // Replace with your Git credentials ID
+                            url: 'git@your-repo-url.git'
+                        ]]
+                    ])
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh "docker build -t ${ECR_REPOSITORY}:${IMAGE_TAG} ."
+                }
+            }
+        }
+        
+        stage('Push to ECR') {
+            steps {
+                script {
+                    withCredentials([aws(credentialsId: AWS_CREDENTIALS_ID, region: 'us-east-1')]) { // Set AWS region
+                        sh "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${ECR_REPOSITORY}"
+                        sh "docker push ${ECR_REPOSITORY}:${IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+        
+        stage('Update ECS Service') {
+            steps {
+                script {
+                    withCredentials([aws(credentialsId: AWS_CREDENTIALS_ID, region: 'us-east-1')]) {
+                        sh "aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --force-new-deployment"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        failure {
+            script {
+                error("Pipeline failed at some stage, stopping execution!")
+            }
+        }
+    }
+}
