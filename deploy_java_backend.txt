@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Select the branch to build')
+    }
+    
+    environment {
+        JAVA_HOME = tool name: 'JDK11', type: 'jdk' // Use the specific Java version configured in Jenkins tools
+        MAVEN_HOME = tool name: 'Maven3.8', type: 'maven' // Use the specific Maven version configured in Jenkins tools
+    }
+    
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+    
+    stages {
+        stage('Checkout Code') {
+            steps {
+                script {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${params.BRANCH_NAME}"]],
+                        userRemoteConfigs: [[
+                            credentialsId: 'your-git-credentials-id', // Replace with your credentials ID
+                            url: 'git@your-repo-url.git'
+                        ]]
+                    ])
+                }
+            }
+        }
+        
+        stage('Build with Maven') {
+            steps {
+                script {
+                    withEnv(["PATH+MAVEN=${MAVEN_HOME}/bin"]) {
+                        sh "mvn clean package -DskipTests"
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to Remote Server') {
+            steps {
+                script {
+                    sshPublisher(
+                        publishers: [
+                            sshPublisherDesc(
+                                configName: 'your-ssh-server-config', // Replace with your configured SSH server name in Jenkins
+                                transfers: [
+                                    sshTransfer(
+                                        sourceFiles: 'target/*.jar',
+                                        removePrefix: 'target',
+                                        remoteDirectory: '/opt/app', // Change as per your remote directory
+                                        execCommand: 'sh /opt/app/deploy.sh' // Change as per your remote deployment script
+                                    )
+                                ],
+                                usePromotionTimestamp: false,
+                                useWorkspaceInPromotion: false,
+                                verbose: true
+                            )
+                        ]
+                    )
+                }
+            }
+        }
+    }
+    
+    post {
+        failure {
+            script {
+                error("Pipeline failed at some stage, stopping execution!")
+            }
+        }
+    }
+}
